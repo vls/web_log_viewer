@@ -8,6 +8,8 @@ from tornado import ioloop, httpserver, websocket
 import tornado.ioloop
 import tornado.web
 
+import logging
+
 
 class Application(tornado.web.Application):
     def __init__(self):
@@ -32,6 +34,7 @@ class MainHandler(tornado.web.RequestHandler):
 
 class TailMixin(object):
     line_terminators = ('\r\n', '\n', '\r')
+    read_size = 1024
 
     def seek(self, pos, whence=0):
         self.fd.seek(pos, whence)
@@ -114,46 +117,14 @@ class TailMixin(object):
     def seek_end(self):
         self.seek(0, 2)
 
+class CallbackTailMixin(TailMixin):
+    def setfd(self, fd):
+        self.fd = fd
 
-
-
-
-class WSTailHandler(websocket.WebSocketHandler, TailMixin):
-    def open(self, *args, **kwargs):
-        print 'ws incoming.. args = %s, kwargs = %s' % (args, kwargs)
-        try:
-            #filename = self.get_argument('filename', None)
-            filename = kwargs.get('filename', None)
-            if filename:
-                basic_path = self.settings['basic_path']
-                fullpath = os.path.normpath(os.path.join(basic_path, filename))
-                if not fullpath.startswith(basic_path):
-                    self.write_message('".." is not allowed in filename')
-                    return
-
-                self.fd = open(fullpath, 'r')
-                self.read_size = 1024
-
-                lines = self.tail(10)
-                for line in lines:
-                    print line
-                    self.write_message(line + '\n')
-
-                self.trailing = True       
-                self.follow()
-            else:
-                self.write_message('no filename')
-        except IOError, e:
-            print e
-
-    def on_message(self, msg):
-        print "get msg: %s" % msg
+    def on_line(self, line):
+        pass
 
     def follow(self):
-        if self.request.connection.stream.closed():
-            print 'client closed'
-            return
-        
         while True:
             where = self.fd.tell()
             line = self.fd.readline()
@@ -172,12 +143,112 @@ class WSTailHandler(websocket.WebSocketHandler, TailMixin):
                         line = line[:-1]
 
                 self.trailing = False
-                self.write_message(line + '\n')
+                self.on_line(line)
             else:
                 self.trailing = True
                 self.seek(where)
                 ioloop.IOLoop.instance().add_timeout(time.time() + 0.1, self.follow)
                 break
+
+        
+
+class TailFileClient(CallbackTailMixin):
+    def __init__(self, filename, init_lines = 10):
+        fd = open(filename, 'r')
+        self.setfd(fd)
+        self.waiters = set()
+        #self.set_line_callback(callback)
+        self.init_lines = init_lines
+        self.trailing = True
+
+    def on_line(self, line, cl = None):
+        if cl is not None:
+            cl.on_line(line)
+            return
+
+        for cl in self.waiters:
+            try:
+                cl.on_line(line)
+            except:
+                pass
+
+
+    def start(self, single = None):
+        init_lines = self.init_lines
+        if init_lines and isinstance(init_lines, (int, long)):
+            lines = self.tail(init_lines)
+            for line in lines:
+                self.on_line(line, cl = single)
+
+        self.follow()
+
+    def close(self):
+        if self.fd:
+            self.fd.close()
+        
+
+def log(msg):
+    print msg
+
+
+class WSTailHandler(websocket.WebSocketHandler):
+    clients = {}
+
+    def on_line(self, line):
+        self.write_message(line + '\n')
+
+    def _request_income(self):
+        cls = WSTailHandler
+        obj = cls.clients.get(self.filename, None)
+        flagFirst = False
+        if obj is None:
+            #first request
+            flagFirst = True
+            log("first request for %s" % self.filename)
+            obj = TailFileClient(self.filename)
+            cls.clients[self.filename] = obj
+        else:
+            log("incomeing request for %s" % self.filename)
+        obj.waiters.add(self)
+
+        if flagFirst:
+            obj.start()
+        else:
+            obj.start(single = self)
+
+
+    def on_close(self):
+        cls = WSTailHandler
+        tfc = cls.clients.get(self.filename)
+
+        tfc.waiters.remove(self)
+        if not tfc.waiters:
+            tfc.close()
+            del cls.clients[self.filename]
+            
+
+
+    def open(self, *args, **kwargs):
+        print 'ws incoming.. args = %s, kwargs = %s' % (args, kwargs)
+        try:
+            #filename = self.get_argument('filename', None)
+            filename = kwargs.get('filename', None)
+            if filename:
+                basic_path = self.settings['basic_path']
+                fullpath = os.path.normpath(os.path.join(basic_path, filename))
+                if not fullpath.startswith(basic_path):
+                    self.write_message('".." is not allowed in filename')
+                    return
+
+                self.filename = fullpath
+                self._request_income()
+            else:
+                self.write_message('no filename')
+        except IOError, e:
+            print e
+
+    def on_message(self, msg):
+        print "get msg: %s" % msg
 
 
 
