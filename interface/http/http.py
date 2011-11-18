@@ -133,7 +133,7 @@ class CallbackTailMixin(TailMixin):
                     # This is just the line terminator added to the end of the file
                     # before a new line, ignore.
                     trailing = False
-                    ioloop.IOLoop.instance().add_timeout(time.time() + 0.1, self.follow)
+                    self.timeout_handle = ioloop.IOLoop.instance().add_timeout(time.time() + 0.1, self.follow)
                     return
 
                 if line[-1] in self.line_terminators:
@@ -147,7 +147,7 @@ class CallbackTailMixin(TailMixin):
             else:
                 self.trailing = True
                 self.seek(where)
-                ioloop.IOLoop.instance().add_timeout(time.time() + 0.1, self.follow)
+                self.timeout_handle = ioloop.IOLoop.instance().add_timeout(time.time() + 0.1, self.follow)
                 break
 
         
@@ -160,6 +160,7 @@ class TailFileClient(CallbackTailMixin):
         #self.set_line_callback(callback)
         self.init_lines = init_lines
         self.trailing = True
+        self.timeout_handle = None
 
     def on_line(self, line, cl = None):
         if cl is not None:
@@ -183,6 +184,9 @@ class TailFileClient(CallbackTailMixin):
         self.follow()
 
     def close(self):
+        if self.timeout_handle:
+            ioloop.IOLoop.instance().remove_timeout(self.timeout_handle)
+
         if self.fd:
             self.fd.close()
         
