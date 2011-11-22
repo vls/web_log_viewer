@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import os
+import os, sys
 import time
 import re
 
@@ -10,6 +10,11 @@ import tornado.web
 
 import logging
 
+def log(msg):
+    print msg
+
+def err_log(msg):
+    print >> sys.stderr, msg
 
 class Application(tornado.web.Application):
     def __init__(self):
@@ -126,6 +131,9 @@ class CallbackTailMixin(TailMixin):
 
     def follow(self):
         while True:
+            fileno = self.fd.fileno()
+            stats = os.fstat(fileno)
+
             where = self.fd.tell()
             line = self.fd.readline()
             if line:    
@@ -146,6 +154,9 @@ class CallbackTailMixin(TailMixin):
                 self.on_line(line)
             else:
                 self.trailing = True
+                if where > stats.st_size:
+                    where = stats.st_size
+                    self.on_line('%s: file truncated\n' % self.filename)
                 self.seek(where)
                 self.timeout_handle = ioloop.IOLoop.instance().add_timeout(time.time() + 0.1, self.follow)
                 break
@@ -155,6 +166,7 @@ class CallbackTailMixin(TailMixin):
 class TailFileClient(CallbackTailMixin):
     def __init__(self, filename, init_lines = 10):
         fd = open(filename, 'r')
+        self.filename = filename
         self.setfd(fd)
         self.waiters = set()
         #self.set_line_callback(callback)
@@ -191,8 +203,6 @@ class TailFileClient(CallbackTailMixin):
             self.fd.close()
         
 
-def log(msg):
-    print msg
 
 
 class WSTailHandler(websocket.WebSocketHandler):
@@ -321,22 +331,12 @@ class TailHandler(tornado.web.RequestHandler, TailMixin):
                 self.seek(where)
                 ioloop.IOLoop.instance().add_timeout(time.time() + 0.1, self.follow)
                 break
-
-
-
-
-
-
-
         
-        
-
 
 def main():
     app = Application()
     http_server = httpserver.HTTPServer(app)
     http_server.listen(18080)
-    print tornado
     ioloop.IOLoop.instance().start()
 
 
