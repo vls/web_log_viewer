@@ -141,27 +141,59 @@ $(function(){
         console.log('send complete');
     };
 
-    var wslisten = function() {
-        var url = "ws://192.168.72.183:18080/websocket/tail/" + filename;
-        if ("WebSocket" in window) {
-            var ws = new WebSocket(url);
-        }
-        else {
-            var ws = new MozWebSocket(url);
-        }
-            
-        ws.onopen = function() {
-            ws.send('Hello world');
 
+    var WSManager = function(filename) {
+        var url = "ws://"+ window.location.host + "/websocket/tail/" + filename;
+        var ws = null;
+        var maxRetry = 5;
+        var curRetry = 0;
+        var waitTime = 100;
+
+
+        var listen = function() {
+            if ("WebSocket" in window) {
+                var ws = new WebSocket(url);
+            }
+            else {
+                var ws = new MozWebSocket(url);
+            }
+                
+            ws.onopen = function() {
+                curRetry = 0;
+                waitTime = 100;
+                console.log('WebSocket opened');
+
+            };
+
+            ws.onmessage = function(evt) {
+                show(evt.data);
+            }
+
+            ws.onerror = function(e) {
+                console.log(e);
+            }
+
+            ws.onclose = function(e) {
+                console.log(e);
+                curRetry += 1;
+                if(curRetry <= maxRetry) {
+                    show('wait ' + waitTime + ' ms to reconnect...\n');
+                    setTimeout(listen, waitTime);
+                    waitTime *= 2;
+                }
+                else {
+                    show('Max retry limit reached. Please manually refresh page after server is up\n');
+                }
+            }
+        }
+
+        return {
+            listen : listen
         };
-
-        ws.onmessage = function(evt) {
-            show(evt.data);
-            
-        }
     };
-    
-    wslisten();
+
+    manager = WSManager(filename);
+    manager.listen();
     
 });
 
