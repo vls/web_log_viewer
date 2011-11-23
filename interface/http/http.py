@@ -10,6 +10,10 @@ import tornado.web
 
 import logging
 
+
+import pyinotify
+from tornado_pyinotify import TornadoNotifier
+
 def log(msg):
     print msg
 
@@ -38,8 +42,11 @@ class MainHandler(tornado.web.RequestHandler):
 
 
 class TailMixin(object):
+
+    
     line_terminators = ('\r\n', '\n', '\r')
     read_size = 1024
+
 
     def seek(self, pos, whence=0):
         self.fd.seek(pos, whence)
@@ -123,9 +130,6 @@ class TailMixin(object):
         self.seek(0, 2)
 
 class CallbackTailMixin(TailMixin):
-    def setfd(self, fd):
-        self.fd = fd
-
     def on_line(self, line):
         pass
 
@@ -161,22 +165,72 @@ class CallbackTailMixin(TailMixin):
                 self.timeout_handle = ioloop.IOLoop.instance().add_timeout(time.time() + 0.1, self.follow)
                 break
 
+    def handler_inotify(self, event):
+        while True:
+            fileno = self.fd.fileno()
+            stats = os.fstat(fileno)
+
+            where = self.fd.tell()
+            line = self.fd.readline()
+            if line:    
+                if self.trailing and line in self.line_terminators:
+                    # This is just the line terminator added to the end of the file
+                    # before a new line, ignore.
+                    trailing = False
+                    continue
+
+                if line[-1] in self.line_terminators:
+                    line = line[:-1]
+                    if line[-1:] == '\r\n' and '\r\n' in self.line_terminators:
+                        # found crlf
+                        line = line[:-1]
+
+                self.trailing = False
+                self.on_line(line)
+            else:
+                print 'has not line'
+                self.trailing = True
+                if where > stats.st_size:
+                    where = stats.st_size
+                    self.on_line('%s: file truncated\n' % self.filename)
+                self.seek(where)
+                break
+
+
+
+    def init_inotify(self):
+        self.watch_manager = pyinotify.WatchManager()
+        handler = EventHandler(handler = self.handler_inotify)
+        self.notifier = TornadoNotifier(self.watch_manager, handler, io_loop = ioloop.IOLoop.instance())
+        self._has_init_inotify = True
+
+    def follow_inotify(self):
+        assert self._has_init_inotify
+        self.watch_manager.add_watch(self.filename, pyinotify.ALL_EVENTS)
+
+class EventHandler(pyinotify.ProcessEvent):
+    def my_init(self, handler):
+        self.handler = handler
+
+    def process_IN_MODIFY(self, event):
+        print "event: ", event
+        self.handler(event)
         
 
 class TailFileClient(CallbackTailMixin):
     def __init__(self, filename, init_lines = 10):
         fd = open(filename, 'r')
         self.filename = filename
-        self.setfd(fd)
+        self.fd = fd
         self.waiters = set()
         #self.set_line_callback(callback)
         self.init_lines = init_lines
         self.trailing = True
         self.timeout_handle = None
 
-    def on_line(self, line, cl = None):
-        if cl is not None:
-            cl.on_line(line)
+    def on_line(self, line, client = None):
+        if client is not None:
+            client.on_line(line)
             return
 
         for cl in self.waiters:
@@ -185,15 +239,16 @@ class TailFileClient(CallbackTailMixin):
             except:
                 pass
 
-
-    def start(self, single = None):
+    def start(self, client = None):
         init_lines = self.init_lines
         if init_lines and isinstance(init_lines, (int, long)):
             lines = self.tail(init_lines)
             for line in lines:
-                self.on_line(line, cl = single)
+                self.on_line(line, client = client)
 
-        self.follow()
+        #self.follow()
+        self.init_inotify()
+        self.follow_inotify()
 
     def close(self):
         if self.timeout_handle:
@@ -228,7 +283,7 @@ class WSTailHandler(websocket.WebSocketHandler):
         if flagFirst:
             obj.start()
         else:
-            obj.start(single = self)
+            obj.start(client = self)
 
 
     def on_close(self):
