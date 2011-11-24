@@ -20,6 +20,8 @@ def log(msg):
 def err_log(msg):
     print >> sys.stderr, msg
 
+BASIC_PATH = '/tmp'
+
 class Application(tornado.web.Application):
     def __init__(self):
         handlers = [
@@ -30,14 +32,14 @@ class Application(tornado.web.Application):
         settings = dict(
             static_path = os.path.join(os.path.dirname(__file__), "static"),
             template_path = os.path.join(os.path.dirname(__file__), "tmpl"), 
-            basic_path = '/tmp',
+            basic_path = BASIC_PATH,
         )
         tornado.web.Application.__init__(self, handlers, **settings)
 
 
 class MainHandler(tornado.web.RequestHandler):
     def get(self):
-        self.render('index.html')
+        self.render('index.html', basic_path = BASIC_PATH)
 
 
 
@@ -135,6 +137,8 @@ class CallbackTailMixin(TailMixin):
 
     def follow(self):
         while True:
+            if self.fd.closed:
+                break
             fileno = self.fd.fileno()
             stats = os.fstat(fileno)
 
@@ -167,6 +171,8 @@ class CallbackTailMixin(TailMixin):
 
     def handler_inotify(self, event):
         while True:
+            if self.fd.closed:
+                break
             fileno = self.fd.fileno()
             stats = os.fstat(fileno)
 
@@ -188,7 +194,6 @@ class CallbackTailMixin(TailMixin):
                 self.trailing = False
                 self.on_line(line)
             else:
-                print 'has not line'
                 self.trailing = True
                 if where > stats.st_size:
                     where = stats.st_size
@@ -213,7 +218,6 @@ class EventHandler(pyinotify.ProcessEvent):
         self.handler = handler
 
     def process_IN_MODIFY(self, event):
-        print "event: ", event
         self.handler(event)
         
 
@@ -298,7 +302,7 @@ class WSTailHandler(websocket.WebSocketHandler):
 
 
     def open(self, *args, **kwargs):
-        print 'ws incoming.. args = %s, kwargs = %s' % (args, kwargs)
+        log('ws incoming.. args = %s, kwargs = %s' % (args, kwargs))
         try:
             #filename = self.get_argument('filename', None)
             filename = kwargs.get('filename', None)
@@ -314,10 +318,10 @@ class WSTailHandler(websocket.WebSocketHandler):
             else:
                 self.write_message('no filename')
         except IOError, e:
-            print e
+            log(str(e))
 
     def on_message(self, msg):
-        print "get msg: %s" % msg
+        log("get msg: %s" % msg)
 
 
 
@@ -341,7 +345,6 @@ class TailHandler(tornado.web.RequestHandler, TailMixin):
 
                 lines = self.tail(10)
                 for line in lines:
-                    print line
                     self.write(line)
                     self.write('\n')
                     self.flush()
@@ -352,12 +355,12 @@ class TailHandler(tornado.web.RequestHandler, TailMixin):
                 self.write('no filename')
                 self.finish()
         except IOError, e:
-            print e
+            log(str(e))
 
 
     def follow(self):
         if self.request.connection.stream.closed():
-            print 'client closed'
+            log('client closed')
             return
         
         while True:

@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+<title>Web tail -f</title>
 <style type="text/css">
 #div_msg {
     width: 1000px;
@@ -192,14 +193,27 @@ $(function(){
         };
     };
 
-    manager = WSManager(filename);
-    manager.listen();
+    $("#btn_start").click(function(){
+        var filename = $("#txt_file").val();
+        console.log(filename);
+        if(!filename || filename == "") {
+            alert('Please input filename first');
+            return;
+        }
+        manager = WSManager(filename);
+        manager.listen();
+    });
     
 });
 
 </script>
 </head>
 <body>
+<span>Root Path:</span><span>{{basic_path}}</span>
+<br/>
+<span>File:</span><input type="text" id="txt_file" />
+<br/>
+<button id="btn_start">tail -f it!</button>
 <div id="div_msg"></div>
 </body>
 </html>
