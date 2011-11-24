@@ -393,8 +393,10 @@ class TailHandler(tornado.web.RequestHandler, TailMixin):
 
 def main():
     app = Application()
+    port = 18080
     http_server = httpserver.HTTPServer(app)
-    http_server.listen(18080)
+    http_server.listen(port)
+    print 'Listening on port %s' % port
     ioloop.IOLoop.instance().start()
 
 
